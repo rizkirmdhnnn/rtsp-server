@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.key
+*.crt
+.DS_Store
+.env
+
+# Video files (avoid committing large binary media)
+videos/*
+!videos/.gitkeep
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.flv
+*.ts
+*.webm

@@ -1,0 +1,15 @@
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+*.crt
+*.key
+.env
+videos/
+*.mp4
+*.mkv
+*.avi
+*.mov

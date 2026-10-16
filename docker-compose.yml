@@ -1,0 +1,42 @@
+services:
+  rtsp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rtsp-server:latest
+    container_name: rtsp-server
+    restart: unless-stopped
+    ports:
+      # Port RTSP (TCP & UDP)
+      - "8554:8554/tcp"
+      - "8554:8554/udp"
+      # Port HLS Browser Preview (HTTP)
+      - "8888:8888/tcp"
+      # Port WebRTC Browser Preview (WHEP Signaling)
+      - "8889:8889/tcp"
+      # Port WebRTC ICE / UDP Media Data
+      - "8189:8189/udp"
+    volumes:
+      # Mount folder video lokal ke container (read-only)
+      - ./videos:/videos:ro
+    environment:
+      # IP Publik / LAN host server agar URL di log dan WebRTC ICE candidate akurat
+      # Contoh: RTSP_HOST_IP=192.168.1.100 atau domain.com
+      - RTSP_HOST_IP=
+      # Port RTSP di dalam server (default: 8554)
+      - RTSP_PORT=8554
+      # Autentikasi RTSP (opsional, format username:password)
+      # Contoh: RTSP_AUTH=admin:secret123
+      - RTSP_AUTH=
+      # Putar berurutan dalam 1 channel playlist (true/false)
+      - RTSP_PLAYLIST=false
+      # Jalankan mode test pattern tanpa video (true/false)
+      - RTSP_SAMPLE=false
+      # Matikan audio stream jika tidak dibutuhkan (true/false)
+      - RTSP_NO_AUDIO=false
+    # Batasi ukuran file log agar tidak memenuhi disk
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
