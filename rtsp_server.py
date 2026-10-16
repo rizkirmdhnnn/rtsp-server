@@ -10,6 +10,7 @@ import argparse
 import atexit
 from dataclasses import dataclass
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ import tempfile
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
+import urllib.parse
 
 # ANSI Color Codes
 COLOR_RESET = "\033[0m"
@@ -246,6 +248,694 @@ def create_mediamtx_config(
     return tmp.name
 
 
+def build_dashboard_html(server: "RTSPServerCLI") -> str:
+    """Menghasilkan halaman web HTML dashboard modern yang menampilkan semua channel dan link streaming."""
+    lan_ip = get_lan_ip()
+    auth_prefix = f"{server.auth_user}:{server.auth_pass}@" if (server.auth_user and server.auth_pass) else ""
+    rtsp_port = server.args.port
+    webrtc_port = server.args.webrtc_port
+    hls_port = server.args.hls_port
+
+    cards_html = []
+    all_rtsp_urls = []
+
+    for idx, target in enumerate(server.targets, 1):
+        rtsp_url = f"rtsp://{auth_prefix}{lan_ip}:{rtsp_port}/{target.name}"
+        webrtc_url = f"http://{lan_ip}:{webrtc_port}/{target.name}"
+        hls_url = f"http://{lan_ip}:{hls_port}/{target.name}"
+        all_rtsp_urls.append(rtsp_url)
+
+        if target.source_type == "sample":
+            src_desc = "Synthetic Test Pattern"
+            res_desc = f"{server.args.resolution or '1280x720'} @ {server.args.fps or 30} FPS"
+            codec_desc = "H.264 / AAC"
+        elif target.source_type == "playlist":
+            src_desc = f"Playlist ({len(target.video_files or [])} Video)"
+            res_desc = f"{target.info['width']}x{target.info['height']} @ {target.info['fps']}fps" if target.info else "Auto"
+            codec_desc = target.info.get("video_codec", "H.264").upper() if target.info else "H.264"
+        else:
+            src_desc = Path(target.video_path or "").name
+            res_desc = f"{target.info['width']}x{target.info['height']} @ {target.info['fps']}fps" if target.info else "Auto"
+            codec_desc = target.info.get("video_codec", "H.264").upper() if target.info else "H.264"
+
+        vlc_cmd = f"vlc \"{rtsp_url}\""
+        ffplay_cmd = f"ffplay -rtsp_transport tcp \"{rtsp_url}\""
+        py_snippet = f"import cv2; cap = cv2.VideoCapture('{rtsp_url}')"
+
+        card = f"""
+        <div class="channel-card" data-name="{target.name.lower()}">
+            <div class="card-header">
+                <div class="channel-title">
+                    <span class="live-indicator"></span>
+                    <h3 title="{target.name}">{target.name}</h3>
+                </div>
+                <span class="badge badge-codec">{codec_desc}</span>
+            </div>
+            <div class="card-meta">
+                <span title="Resolusi & Framerate">📐 {res_desc}</span>
+                <span title="File Sumber">📁 {src_desc}</span>
+            </div>
+
+            <div class="url-group">
+                <label>RTSP Stream URL:</label>
+                <div class="copy-box">
+                    <input type="text" readonly value="{rtsp_url}" id="rtsp-{idx}">
+                    <button class="btn btn-copy" onclick="copyText('{rtsp_url}', this)" title="Salin URL RTSP">
+                        <span>📋 Salin</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <a href="{webrtc_url}" target="_blank" class="btn btn-webrtc" title="Buka WebRTC Player di Tab Baru">
+                    ⚡ WebRTC Live
+                </a>
+                <a href="{hls_url}" target="_blank" class="btn btn-hls" title="Buka HLS Player di Tab Baru">
+                    📺 HLS Player
+                </a>
+                <button class="btn btn-preview" onclick="openPreview('{webrtc_url}', '{target.name}')" title="Preview video langsung di halaman ini">
+                    👁️ Preview
+                </button>
+            </div>
+
+            <details class="cli-details">
+                <summary>💻 Perintah Cepat (VLC / FFplay / Python)</summary>
+                <div class="cli-content">
+                    <div class="cli-item">
+                        <span>VLC Player:</span>
+                        <code>{vlc_cmd}</code>
+                    </div>
+                    <div class="cli-item">
+                        <span>FFplay:</span>
+                        <code>{ffplay_cmd}</code>
+                    </div>
+                    <div class="cli-item">
+                        <span>Python OpenCV:</span>
+                        <code>{py_snippet}</code>
+                    </div>
+                </div>
+            </details>
+        </div>
+        """
+        cards_html.append(card)
+
+    cards_joined = "\n".join(cards_html)
+    all_urls_txt = "\\n".join(all_rtsp_urls)
+
+    return f"""<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📹 RTSP Server Stream Dashboard</title>
+    <style>
+        :root {{
+            --bg-base: #0B0F19;
+            --bg-surface: #111827;
+            --bg-card: #1F2937;
+            --border: #374151;
+            --text-main: #F9FAFB;
+            --text-muted: #9CA3AF;
+            --primary: #06B6D4;
+            --primary-hover: #0891B2;
+            --success: #10B981;
+            --purple: #8B5CF6;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 24px;
+        }}
+        .container {{
+            max-width: 1400px;
+            margin: 0 auto;
+        }}
+        header {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+        }}
+        .header-title {{
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }}
+        .header-title h1 {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #FFF;
+        }}
+        .header-title p {{
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }}
+        .stats-grid {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }}
+        .stat-badge {{
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .live-dot {{
+            width: 10px;
+            height: 10px;
+            background-color: var(--success);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--success);
+            animation: pulse 1.8s infinite;
+        }}
+        @keyframes pulse {{
+            0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }}
+            70% {{ transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }}
+            100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }}
+        }}
+        .toolbar {{
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+        }}
+        .search-box {{
+            flex: 1;
+            min-width: 280px;
+            position: relative;
+        }}
+        .search-box input {{
+            width: 100%;
+            padding: 12px 16px 12px 42px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: #FFF;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.2s;
+        }}
+        .search-box input:focus {{
+            border-color: var(--primary);
+        }}
+        .search-icon {{
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+        }}
+        .action-buttons {{
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }}
+        .btn {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 9px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            border: none;
+            transition: all 0.2s;
+            gap: 6px;
+        }}
+        .btn-primary {{
+            background: var(--primary);
+            color: #000;
+        }}
+        .btn-primary:hover {{ background: var(--primary-hover); }}
+        .btn-secondary {{
+            background: var(--bg-card);
+            color: var(--text-main);
+            border: 1px solid var(--border);
+        }}
+        .btn-secondary:hover {{ background: #283548; }}
+        .btn-webrtc {{
+            background: rgba(6, 182, 212, 0.15);
+            color: var(--primary);
+            border: 1px solid rgba(6, 182, 212, 0.4);
+            flex: 1;
+        }}
+        .btn-webrtc:hover {{ background: rgba(6, 182, 212, 0.3); }}
+        .btn-hls {{
+            background: rgba(139, 92, 246, 0.15);
+            color: #A78BFA;
+            border: 1px solid rgba(139, 92, 246, 0.4);
+            flex: 1;
+        }}
+        .btn-hls:hover {{ background: rgba(139, 92, 246, 0.3); }}
+        .btn-preview {{
+            background: rgba(16, 185, 129, 0.15);
+            color: #34D399;
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            flex: 1;
+        }}
+        .btn-preview:hover {{ background: rgba(16, 185, 129, 0.3); }}
+        .channels-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 20px;
+        }}
+        .channel-card {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            transition: transform 0.15s, border-color 0.15s;
+        }}
+        .channel-card:hover {{
+            border-color: #4B5563;
+            transform: translateY(-2px);
+        }}
+        .card-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }}
+        .channel-title {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }}
+        .channel-title h3 {{
+            font-size: 16px;
+            font-weight: 600;
+            color: #FFF;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .live-indicator {{
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            flex-shrink: 0;
+        }}
+        .badge {{
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }}
+        .badge-codec {{
+            background: #1E293B;
+            color: var(--primary);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+        }}
+        .card-meta {{
+            font-size: 13px;
+            color: var(--text-muted);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }}
+        .card-meta span {{
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .url-group {{
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }}
+        .url-group label {{
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        .copy-box {{
+            display: flex;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }}
+        .copy-box input {{
+            background: transparent;
+            border: none;
+            padding: 8px 12px;
+            color: var(--success);
+            font-family: monospace;
+            font-size: 13px;
+            flex: 1;
+            outline: none;
+            min-width: 0;
+        }}
+        .btn-copy {{
+            background: #374151;
+            color: #FFF;
+            border: none;
+            padding: 0 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }}
+        .btn-copy:hover {{ background: #4B5563; }}
+        .btn-copy.copied {{ background: var(--success); color: #000; }}
+        .btn-group {{
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }}
+        details.cli-details {{
+            border-top: 1px solid var(--border);
+            padding-top: 10px;
+            font-size: 12px;
+        }}
+        details.cli-details summary {{
+            cursor: pointer;
+            color: var(--text-muted);
+            font-weight: 500;
+            user-select: none;
+        }}
+        details.cli-details summary:hover {{ color: #FFF; }}
+        .cli-content {{
+            margin-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }}
+        .cli-item span {{
+            color: var(--text-muted);
+            display: block;
+            margin-bottom: 2px;
+            font-size: 11px;
+        }}
+        .cli-item code {{
+            background: #0D1117;
+            padding: 6px 8px;
+            border-radius: 4px;
+            display: block;
+            color: #E2E8F0;
+            font-family: monospace;
+            word-break: break-all;
+            user-select: all;
+        }}
+        /* Modal Preview */
+        .modal-overlay {{
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }}
+        .modal-content {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            width: 100%;
+            max-width: 900px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            max-height: 90vh;
+        }}
+        .modal-header {{
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+        }}
+        .modal-header h3 {{ font-size: 18px; color: #FFF; }}
+        .modal-close {{
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 24px;
+            cursor: pointer;
+            line-height: 1;
+        }}
+        .modal-close:hover {{ color: #FFF; }}
+        .modal-body {{
+            position: relative;
+            padding-bottom: 56.25%; /* 16:9 ratio */
+            height: 0;
+            overflow: hidden;
+            background: #000;
+        }}
+        .modal-body iframe {{
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-title">
+                <span class="live-dot"></span>
+                <div>
+                    <h1>RTSP Streamer Dashboard</h1>
+                    <p>Monitoring & Katalog Stream Server (MediaMTX & FFmpeg)</p>
+                </div>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-badge">
+                    <span>📡 Status:</span>
+                    <strong style="color: var(--success);">ONLINE</strong>
+                </div>
+                <div class="stat-badge">
+                    <span>📹 Channel:</span>
+                    <strong id="channel-count">{len(server.targets)} Aktif</strong>
+                </div>
+                <div class="stat-badge">
+                    <span>🌐 IP Server:</span>
+                    <strong>{lan_ip}</strong>
+                </div>
+            </div>
+        </header>
+
+        <div class="toolbar">
+            <div class="search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="searchInput" placeholder="Cari nama channel CCTV..." oninput="filterChannels()">
+            </div>
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="copyAllUrls()">
+                    📋 Salin Semua URL RTSP
+                </button>
+                <a href="/playlist.m3u" download="cctv_streams.m3u" class="btn btn-secondary">
+                    📥 Download Playlist (.M3U)
+                </a>
+                <a href="/api/channels" target="_blank" class="btn btn-secondary">
+                    JSON API
+                </a>
+            </div>
+        </div>
+
+        <div class="channels-grid" id="channelsGrid">
+            {cards_joined}
+        </div>
+    </div>
+
+    <!-- Modal Video Preview -->
+    <div class="modal-overlay" id="previewModal" onclick="closePreview(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="modalTitle">Live Preview</h3>
+                <button class="modal-close" onclick="closePreview()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <iframe id="previewIframe" src="" allowfullscreen></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function copyText(text, btn) {{
+            navigator.clipboard.writeText(text).then(() => {{
+                const original = btn.innerHTML;
+                btn.innerHTML = '✓ Tersalin!';
+                btn.classList.add('copied');
+                setTimeout(() => {{
+                    btn.innerHTML = original;
+                    btn.classList.remove('copied');
+                }}, 2000);
+            }});
+        }}
+
+        function copyAllUrls() {{
+            const allUrls = "{all_urls_txt}".replace(/\\n/g, '\\n');
+            navigator.clipboard.writeText(allUrls).then(() => {{
+                alert('Berhasil menyalin semua {len(server.targets)} URL RTSP ke clipboard!');
+            }});
+        }}
+
+        function filterChannels() {{
+            const query = document.getElementById('searchInput').value.toLowerCase().trim();
+            const cards = document.querySelectorAll('.channel-card');
+            let visibleCount = 0;
+            cards.forEach(card => {{
+                const name = card.getAttribute('data-name');
+                if (name.includes(query)) {{
+                    card.style.display = 'flex';
+                    visibleCount++;
+                }} else {{
+                    card.style.display = 'none';
+                }}
+            }});
+            document.getElementById('channel-count').innerText = visibleCount + ' / {len(server.targets)} Aktif';
+        }}
+
+        function openPreview(url, title) {{
+            document.getElementById('modalTitle').innerText = 'Live Preview: ' + title;
+            document.getElementById('previewIframe').src = url;
+            document.getElementById('previewModal').style.display = 'flex';
+        }}
+
+        function closePreview() {{
+            document.getElementById('previewIframe').src = '';
+            document.getElementById('previewModal').style.display = 'none';
+        }}
+
+        document.addEventListener('keydown', (e) => {{
+            if (e.key === 'Escape') closePreview();
+        }});
+    </script>
+</body>
+</html>
+"""
+
+
+def create_dashboard_handler(server: "RTSPServerCLI"):
+    """Factory untuk membuat HTTP request handler yang terikat ke instance RTSPServerCLI."""
+    class DashboardHandler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args):
+            # Matikan access logging di stdout agar tidak mengacaukan tampilan CLI
+            _ = (format, args)
+            return
+
+        def do_HEAD(self):
+            parsed_path = urllib.parse.urlparse(self.path)
+            path = parsed_path.path
+            if path in ("/", "/index.html"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+            elif path == "/api/channels":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+            elif path == "/playlist.m3u":
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/x-mpegurl")
+                self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_GET(self):
+            parsed_path = urllib.parse.urlparse(self.path)
+            path = parsed_path.path
+
+            if path == "/" or path == "/index.html":
+                html = build_dashboard_html(server)
+                content = html.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+
+            elif path == "/api/channels":
+                lan_ip = get_lan_ip()
+                auth_prefix = f"{server.auth_user}:{server.auth_pass}@" if (server.auth_user and server.auth_pass) else ""
+                channels = []
+                for target in server.targets:
+                    channels.append({
+                        "name": target.name,
+                        "source_type": target.source_type,
+                        "rtsp_url": f"rtsp://{auth_prefix}{lan_ip}:{server.args.port}/{target.name}",
+                        "webrtc_url": f"http://{lan_ip}:{server.args.webrtc_port}/{target.name}",
+                        "hls_url": f"http://{lan_ip}:{server.args.hls_port}/{target.name}",
+                        "width": target.info.get("width") if target.info else 0,
+                        "height": target.info.get("height") if target.info else 0,
+                        "fps": target.info.get("fps") if target.info else 30.0,
+                        "video_codec": target.info.get("video_codec") if target.info else "h264",
+                    })
+
+                data = {
+                    "status": "online",
+                    "uptime_seconds": int(time.time() - server.start_time) if server.start_time else 0,
+                    "host_ip": lan_ip,
+                    "total_channels": len(channels),
+                    "channels": channels
+                }
+                content = json.dumps(data, indent=2).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+
+            elif path == "/playlist.m3u":
+                lan_ip = get_lan_ip()
+                auth_prefix = f"{server.auth_user}:{server.auth_pass}@" if (server.auth_user and server.auth_pass) else ""
+                lines = ["#EXTM3U"]
+                for target in server.targets:
+                    rtsp_url = f"rtsp://{auth_prefix}{lan_ip}:{server.args.port}/{target.name}"
+                    lines.append(f"#EXTINF:-1 tvg-id=\"{target.name}\" tvg-name=\"{target.name}\",{target.name}")
+                    lines.append(rtsp_url)
+
+                content = "\n".join(lines).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/x-mpegurl")
+                self.send_header("Content-Disposition", "attachment; filename=\"cctv_streams.m3u\"")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+
+            else:
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"404 Not Found")
+
+    return DashboardHandler
+
+
 @dataclass
 class StreamTarget:
     name: str                           # Path RTSP, misal: "live/stream", "cam1", "kamera_depan"
@@ -268,6 +958,8 @@ class RTSPServerCLI:
         self.sessions: Dict[str, Dict] = {}
         self.sessions_lock = threading.Lock()
         self.monitor_thread: Optional[threading.Thread] = None
+        self.http_server: Optional[HTTPServer] = None
+        self.web_thread: Optional[threading.Thread] = None
 
         # Parse authentication
         self.auth_user = None
@@ -533,6 +1225,15 @@ class RTSPServerCLI:
                 pass
             self.config_path = None
 
+        # Hentikan Web Dashboard Server
+        if self.http_server:
+            try:
+                self.http_server.shutdown()
+                self.http_server.server_close()
+            except Exception:
+                pass
+            self.http_server = None
+
         print(f"{COLOR_GREEN}✓ Semua stream & RTSP Server berhasil dihentikan.{COLOR_RESET}")
 
     def build_ffmpeg_cmd(self, target: StreamTarget, rtsp_publish_url: str) -> List[str]:
@@ -776,6 +1477,16 @@ class RTSPServerCLI:
         self.is_running = True
         self.start_time = time.time()
 
+        # 6.5 Jalankan Web Dashboard
+        if not self.args.no_web:
+            try:
+                handler_cls = create_dashboard_handler(self)
+                self.http_server = HTTPServer(("0.0.0.0", self.args.web_port), handler_cls)
+                self.web_thread = threading.Thread(target=self.http_server.serve_forever, daemon=True)
+                self.web_thread.start()
+            except Exception as e:
+                print(f"{COLOR_YELLOW}⚠ Gagal menjalankan Web Dashboard di port {self.args.web_port}: {e}{COLOR_RESET}")
+
         # 7. Tampilkan Dashboard URL & Status
         lan_ip = get_lan_ip()
         auth_prefix = f"{self.auth_user}:{self.auth_pass}@" if (self.auth_user and self.auth_pass) else ""
@@ -826,6 +1537,11 @@ class RTSPServerCLI:
                 print(f"  {COLOR_CYAN}► WebRTC (Live): http://{lan_ip}:{webrtc_port}/{first_target.name}{COLOR_RESET} {COLOR_DIM}(Near-zero latency di Chrome/Safari){COLOR_RESET}")
             if not self.args.no_hls:
                 print(f"  {COLOR_CYAN}► HLS (Player) : http://{lan_ip}:{hls_port}/{first_target.name}{COLOR_RESET}")
+
+        if not self.args.no_web:
+            web_url = f"http://{lan_ip}:{self.args.web_port}/"
+            print(f"\n{COLOR_BOLD}🌐 HALAMAN WEB DASHBOARD (Katalog Semua Link Stream):{COLOR_RESET}")
+            print(f"  {COLOR_GREEN}{COLOR_BOLD}► {web_url}{COLOR_RESET}  {COLOR_DIM}(Buka di browser untuk melihat semua channel, salin URL, & preview){COLOR_RESET}")
 
         first_stream_url = f"rtsp://{auth_prefix}127.0.0.1:{rtsp_port}/{self.targets[0].name}"
         print(f"\n{COLOR_BOLD}💡 CONTOH TESTING CEPAT:{COLOR_RESET}")
@@ -940,6 +1656,11 @@ Contoh Penggunaan:
     parser.add_argument("--hls-port", type=int, default=8888, help="Port HLS browser preview (default: 8888)")
     parser.add_argument("--no-webrtc", action="store_true", help="Nonaktifkan WebRTC preview")
     parser.add_argument("--no-hls", action="store_true", help="Nonaktifkan HLS preview")
+
+    # Web Dashboard options
+    default_web_port = int(os.environ.get("RTSP_WEB_PORT") or os.environ.get("WEB_PORT") or 8080)
+    parser.add_argument("-w", "--web-port", type=int, default=default_web_port, help=f"Port Web Dashboard (default: {default_web_port})")
+    parser.add_argument("--no-web", action="store_true", help="Nonaktifkan Web Dashboard")
 
     # Mode khusus
     parser.add_argument("--sample", action="store_true", help="Stream synthetic test card real-time (tanpa perlu file video)")

@@ -7,6 +7,8 @@ services:
     container_name: rtsp-server
     restart: unless-stopped
     ports:
+      # Port Web Dashboard (Katalog Semua Link Stream)
+      - "8080:8080/tcp"
       # Port RTSP (TCP & UDP)
       - "8554:8554/tcp"
       - "8554:8554/udp"
@@ -23,6 +25,8 @@ services:
       # IP Publik / LAN host server agar URL di log dan WebRTC ICE candidate akurat
       # Contoh: RTSP_HOST_IP=192.168.1.100 atau domain.com
       - RTSP_HOST_IP=
+      # Port Web Dashboard (default: 8080)
+      - RTSP_WEB_PORT=8080
       # Port RTSP di dalam server (default: 8554)
       - RTSP_PORT=8554
       # Autentikasi RTSP (opsional, format username:password)

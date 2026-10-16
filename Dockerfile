@@ -34,10 +34,12 @@ RUN chmod +x /app/rtsp_server.py /usr/local/bin/docker-entrypoint.sh && \
     ln -sf /app/rtsp_server.py /usr/local/bin/rtsp-server
 
 # Port yang diekspos:
+# 8080 : Web Stream Dashboard (HTTP)
 # 8554 : RTSP server (TCP & UDP)
 # 8888 : HLS browser preview (TCP)
 # 8889 : WebRTC browser preview WHEP (TCP)
 # 8189 : WebRTC ICE media data (UDP)
+EXPOSE 8080/tcp
 EXPOSE 8554/tcp 8554/udp
 EXPOSE 8888/tcp
 EXPOSE 8889/tcp

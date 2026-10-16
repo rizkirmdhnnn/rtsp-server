@@ -19,6 +19,7 @@ Didukung oleh:
 - **Hardware Acceleration**: Otomatis menggunakan Apple Silicon VideoToolbox (`h264_videotoolbox`) jika perlu transcode.
 - **Deteksi Otomatis IP LAN**: Menampilkan alamat URL RTSP localhost dan IP jaringan Wi-Fi/LAN (misal `rtsp://10.10.x.x:8554/...`) agar mudah dites langsung dari smartphone atau perangkat lain di jaringan yang sama.
 - **WebRTC & HLS Browser Preview**: Dilengkapi link player browser bawaan tanpa perlu install VLC.
+- **Web Dashboard Katalog Stream (`:8080`)**: Halaman web khusus terpadu yang menampilkan semua channel aktif, pencarian realtime, tombol salin 1-klik URL RTSP, download file playlist `.m3u` untuk VLC, serta player preview langsung di browser.
 - **Mode Test Pattern (`--sample`)**: Bisa langsung live streaming gambar test pattern dengan timer jam real-time tanpa perlu file video apa pun!
 - **Dukungan Autentikasi**: Opsi username & password untuk menguji aplikasi dengan proteksi RTSP auth.
 - **Clean Shutdown**: Menekan `Ctrl+C` langsung menghentikan semua proses tanpa meninggalkan port menggantung.
@@ -199,6 +200,7 @@ docker compose down
 **A. Jalankan dengan Folder Video Lokal:**
 ```bash
 docker run -d --name rtsp-server \
+  -p 8080:8080/tcp \
   -p 8554:8554/tcp -p 8554:8554/udp \
   -p 8888:8888/tcp -p 8889:8889/tcp \
   -v $(pwd)/videos:/videos:ro \
@@ -208,6 +210,7 @@ docker run -d --name rtsp-server \
 **B. Jalankan Mode Test Pattern (Tanpa File Video):**
 ```bash
 docker run -d --name rtsp-server \
+  -p 8080:8080/tcp \
   -p 8554:8554/tcp -p 8554:8554/udp \
   -p 8888:8888/tcp -p 8889:8889/tcp \
   rtsp-server:latest --sample
@@ -217,6 +220,7 @@ docker run -d --name rtsp-server \
 **C. Dengan Custom Port & Autentikasi:**
 ```bash
 docker run -d --name rtsp-server \
+  -p 8080:8080/tcp \
   -p 8554:8554/tcp -p 8554:8554/udp \
   -v $(pwd)/videos:/videos:ro \
   -e RTSP_AUTH=admin:secret123 \
@@ -228,7 +232,9 @@ docker run -d --name rtsp-server \
 
 | Variabel | Default | Deskripsi |
 |---|---|---|
-| `RTSP_HOST_IP` | - | IP Publik/LAN host server untuk WebRTC ICE & tampilan URL di log |
+| `RTSP_HOST_IP` | - | IP Publik/LAN host server untuk WebRTC ICE & tampilan URL di log/dashboard |
+| `RTSP_WEB_PORT` | `8080` | Port Web Dashboard katalog stream |
+| `RTSP_NO_WEB` | `false` | Nonaktifkan web dashboard jika bernilai `true` |
 | `RTSP_PORT` | `8554` | Port RTSP server |
 | `RTSP_AUTH` | - | Format `username:password` untuk proteksi RTSP |
 | `RTSP_STREAM` | `live/stream` | Nama stream default |

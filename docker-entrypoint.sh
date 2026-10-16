@@ -41,6 +41,16 @@ if [ -n "$RTSP_BITRATE" ]; then
     EXTRA_ARGS+=("--bitrate" "$RTSP_BITRATE")
 fi
 
+if [ -n "$RTSP_WEB_PORT" ]; then
+    EXTRA_ARGS+=("-w" "$RTSP_WEB_PORT")
+elif [ -n "$WEB_PORT" ]; then
+    EXTRA_ARGS+=("-w" "$WEB_PORT")
+fi
+
+if [ "$RTSP_NO_WEB" = "true" ] || [ "$RTSP_NO_WEB" = "1" ]; then
+    EXTRA_ARGS+=("--no-web")
+fi
+
 # Jika argumen diberikan lewat docker run / CMD
 if [ $# -gt 0 ]; then
     exec python3 /app/rtsp_server.py "${EXTRA_ARGS[@]}" "$@"
